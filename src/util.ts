@@ -14,6 +14,7 @@ import timeout from 'p-timeout';
 import { Certificate } from 'pkijs';
 import type { Readable } from 'stream';
 import { temporaryFile } from 'tempy';
+import { setTimeout } from 'timers/promises';
 import type { Entry, ZipFile } from 'yauzl';
 import { fromFd } from 'yauzl';
 import { venvOptions } from '../scripts/common/python';
@@ -48,18 +49,10 @@ export const retryCondition = async (
  * Pause for a given duration.
  *
  * @param durationInMs The duration to pause for, in milliseconds.
+ * @param abortSignal Provide a signal to abort the pause.
  */
 export const pause = (durationInMs: number, abortSignal?: AbortSignal) =>
-    new Promise((res, rej) => {
-        setTimeout(res, durationInMs);
-        if (abortSignal) {
-            const abortListener = () => {
-                abortSignal.removeEventListener('abort', abortListener);
-                rej(abortSignal.reason);
-            };
-            abortSignal?.addEventListener('abort', abortListener);
-        }
-    });
+    setTimeout(durationInMs, undefined, { signal: abortSignal });
 
 /**
  * Get metadata about the app at the given path.

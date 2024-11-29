@@ -430,7 +430,7 @@ emulators running on the host.
 
 #### Defined in
 
-[util.ts:399](https://github.com/tweaselORG/appstraction/blob/main/src/util.ts#L399)
+[util.ts:392](https://github.com/tweaselORG/appstraction/blob/main/src/util.ts#L392)
 
 ___
 
@@ -467,13 +467,13 @@ An object containing the parsed metadata, or `undefined` if the file doesn't exi
 
 #### Defined in
 
-[util.ts:78](https://github.com/tweaselORG/appstraction/blob/main/src/util.ts#L78)
+[util.ts:71](https://github.com/tweaselORG/appstraction/blob/main/src/util.ts#L71)
 
 ___
 
 ### pause
 
-▸ **pause**(`durationInMs`, `abortSignal?`): `Promise`<`unknown`\>
+▸ **pause**(`durationInMs`, `abortSignal?`): `Promise`<`undefined`\>
 
 Pause for a given duration.
 
@@ -482,15 +482,15 @@ Pause for a given duration.
 | Name | Type | Description |
 | :------ | :------ | :------ |
 | `durationInMs` | `number` | The duration to pause for, in milliseconds. |
-| `abortSignal?` | `AbortSignal` | - |
+| `abortSignal?` | `AbortSignal` | Provide a signal to abort the pause. |
 
 #### Returns
 
-`Promise`<`unknown`\>
+`Promise`<`undefined`\>
 
 #### Defined in
 
-[util.ts:52](https://github.com/tweaselORG/appstraction/blob/main/src/util.ts#L52)
+[util.ts:54](https://github.com/tweaselORG/appstraction/blob/main/src/util.ts#L54)
 
 ___
 
