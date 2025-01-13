@@ -33,7 +33,7 @@
         "fix": "yarn eslint . --ignore-path .gitignore --ext .js,.jsx,.ts,.tsx --fix",
         "postinstall": "node scripts/postinstall.js; andromatic-install -p platform-tools 'build-tools;33.0.2'",
         "lint": "tsc && eslint . --ignore-path .gitignore --ext .js,.jsx,.ts,.tsx && git diff --check",
-        "prepack": "rm -rf dist && yarn build && yarn typedoc",
+        "prepack": "rm -rf .parcel-cache dist && yarn build && yarn typedoc",
         "print-version": "echo \"// Shim to make the version available at runtime. Auto-generated, please ignore.\nexport const appstractionVersion = '$npm_package_version';\" > src/version.gen.ts",
         "test": "echo 'TODO: No tests specified yet.'",
         "tsrun": "node --loader ts-node/esm",
