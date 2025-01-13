@@ -81,8 +81,10 @@ export type PlatformApi<
      * @param tries The number of times to check if the device is present and booted. On Android, one try times out
      *   after 7 seconds and the default number of tries is 20. On iOS, one try times out after 10 seconds and the
      *   default number of tries is 20.
+     * @param options.abortSignal Pass an AbortSignal to abort the waiting in case of a crash. This might not be
+     *   graceful.
      */
-    waitForDevice: (tries?: number) => Promise<void>;
+    waitForDevice: (tries?: number, options?: { abortSignal?: AbortSignal }) => Promise<void>;
     /**
      * Assert that the selected device is connected and ready to be used with the selected capabilities, performing
      * necessary setup steps. This should always be the first function you call.
@@ -91,26 +93,33 @@ export type PlatformApi<
      *
      * For Android, you can set the url to the WireGuard APK which should be installed in the `WIREGUARD_APK_URL`
      * environment variable. Note that it is only used if WireGuard isn’t installed already.
+     *
+     * @param options.abortSignal Pass an AbortSignal to abort the waiting in case of a crash. This might not be
+     *   graceful.
      */
-    ensureDevice: () => Promise<void>;
+    ensureDevice: (options?: { abortSignal?: AbortSignal }) => Promise<void>;
     /**
      * Reset the device to the specified snapshot (only available for emulators).
      *
      * @param snapshotName The name of the snapshot to reset to.
+     * @param options.abortSignal Pass an AbortSignal to abort the waiting in case of a crash. This might not be
+     *   graceful.
      */
     resetDevice: Platform extends 'android'
         ? RunTarget extends 'emulator'
-            ? (snapshotName: string) => Promise<void>
+            ? (snapshotName: string, options?: { abortSignal?: AbortSignal }) => Promise<void>
             : never
         : never;
     /**
      * Save the device state to the specified snapshot (only available for emulators).
      *
      * @param snapshotName The name of the snapshot to save to.
+     * @param options.abortSignal Pass an AbortSignal to abort the waiting in case of a crash. This might not be
+     *   graceful.
      */
     snapshotDeviceState: Platform extends 'android'
         ? RunTarget extends 'emulator'
-            ? (snapshotName: string) => Promise<void>
+            ? (snapshotName: string, options?: { abortSignal?: AbortSignal }) => Promise<void>
             : never
         : never;
     /**
@@ -370,13 +379,13 @@ export type PlatformApi<
     /** @ignore */
     _internal: Platform extends 'android'
         ? {
-              hasDeviceBooted: (options?: { waitForDevice?: boolean }) => Promise<boolean>;
+              hasDeviceBooted: (options?: { waitForDevice?: boolean; abortSignal?: AbortSignal }) => Promise<boolean>;
               ensureFrida: () => Promise<void>;
               requireRoot: (action: string) => Promise<{
                   adbRootShell: AdbRootFunction;
                   adbRootPush: (source: string, destination: string) => Promise<void>;
               }>;
-              ensureAdb: () => Promise<void>;
+              ensureAdb: (options?: { abortSignal?: AbortSignal }) => Promise<void>;
 
               getCertificateSubjectHashOld: (path: string) => Promise<string | undefined>;
               hasCertificateAuthority: (filename: string) => Promise<boolean>;

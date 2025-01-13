@@ -14,6 +14,7 @@ import timeout from 'p-timeout';
 import { Certificate } from 'pkijs';
 import type { Readable } from 'stream';
 import { temporaryFile } from 'tempy';
+import { setTimeout } from 'timers/promises';
 import type { Entry, ZipFile } from 'yauzl';
 import { fromFd } from 'yauzl';
 import { venvOptions } from '../scripts/common/python';
@@ -28,14 +29,16 @@ export const asyncUnimplemented = (action: string) => async () => {
 export const retryCondition = async (
     condition: () => boolean | Promise<boolean>,
     maxTries = 50,
-    pauseBetweenTries = 250
+    pauseBetweenTries = 250,
+    abortSignal?: AbortSignal
 ) => {
     let tries = 0;
 
     while (!(await condition())) {
+        if (abortSignal?.aborted) return false;
         if (tries > maxTries) return false;
 
-        await pause(pauseBetweenTries);
+        await pause(pauseBetweenTries, abortSignal);
         tries++;
     }
 
@@ -46,11 +49,10 @@ export const retryCondition = async (
  * Pause for a given duration.
  *
  * @param durationInMs The duration to pause for, in milliseconds.
+ * @param abortSignal Provide a signal to abort the pause.
  */
-export const pause = (durationInMs: number) =>
-    new Promise((res) => {
-        setTimeout(res, durationInMs);
-    });
+export const pause = (durationInMs: number, abortSignal?: AbortSignal) =>
+    setTimeout(durationInMs, undefined, { signal: abortSignal });
 
 /**
  * Get metadata about the app at the given path.

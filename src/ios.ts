@@ -212,21 +212,21 @@ addContact(${JSON.stringify(contactData)});`,
 } as const;
 
 export const iosApi = <RunTarget extends SupportedRunTarget<'ios'>>(
-    options: PlatformApiOptions<'ios', RunTarget, SupportedCapability<'ios'>[]>
+    platformApiOptions: PlatformApiOptions<'ios', RunTarget, SupportedCapability<'ios'>[]>
 ): PlatformApi<'ios', 'device', SupportedCapability<'ios'>[]> => ({
-    target: { platform: 'ios', runTarget: options.runTarget },
+    target: { platform: 'ios', runTarget: platformApiOptions.runTarget },
     _internal: {
         ssh: async (command, commandOptions) => {
-            const killProxyProcess = !options.targetOptions?.ip
-                ? await startUsbmuxProxy(22161, options.targetOptions?.port || 22)
+            const killProxyProcess = !platformApiOptions.targetOptions?.ip
+                ? await startUsbmuxProxy(22161, platformApiOptions.targetOptions?.port || 22)
                 : undefined;
 
-            const username = options.targetOptions?.username || 'mobile';
-            const password = options.targetOptions?.password || 'alpine';
+            const username = platformApiOptions.targetOptions?.username || 'mobile';
+            const password = platformApiOptions.targetOptions?.password || 'alpine';
 
             const ssh = await new NodeSSH().connect({
-                host: options.targetOptions?.ip || '127.0.0.1',
-                port: options.targetOptions?.ip ? options.targetOptions?.port ?? 22 : 22161,
+                host: platformApiOptions.targetOptions?.ip || '127.0.0.1',
+                port: platformApiOptions.targetOptions?.ip ? platformApiOptions.targetOptions?.port ?? 22 : 22161,
                 username,
                 password,
             });
@@ -251,12 +251,12 @@ export const iosApi = <RunTarget extends SupportedRunTarget<'ios'>>(
             return res;
         },
         async setupEnvironment() {
-            if (!options.capabilities.includes('ssh'))
+            if (!platformApiOptions.capabilities.includes('ssh'))
                 throw new Error('SSH is required for setting up the environment.');
 
             const neededPackages = ['sqlite3', 'com.conradkramer.open', 'ldid'];
-            if (options.capabilities.includes('frida')) neededPackages.push('re.frida.server', 'plutil');
-            if (options.capabilities.includes('certificate-pinning-bypass'))
+            if (platformApiOptions.capabilities.includes('frida')) neededPackages.push('re.frida.server', 'plutil');
+            if (platformApiOptions.capabilities.includes('certificate-pinning-bypass'))
                 neededPackages.push('com.julioverne.sslkillswitch2');
 
             const { stdout: packageList } = await this.ssh(['apt', 'list', '--installed']);
@@ -311,12 +311,12 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
             }
         },
         async ensureFrida() {
-            if (!options.capabilities.includes('frida')) return;
+            if (!platformApiOptions.capabilities.includes('frida')) return;
 
             const fridaIsRunning = async () =>
                 (await python('frida-ps', ['-U'], { reject: false })).stdout.includes('frida-server');
 
-            if (!(await fridaIsRunning()) && options.capabilities.includes('ssh')) {
+            if (!(await fridaIsRunning()) && platformApiOptions.capabilities.includes('ssh')) {
                 await this.ssh(['frida-server', '-D']);
                 if (!(await retryCondition(fridaIsRunning, 20))) throw new Error('Frida server did not start.');
             }
@@ -333,7 +333,9 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
 
     resetDevice: asyncUnimplemented('resetDevice') as never,
     snapshotDeviceState: asyncUnimplemented('snapshotDeviceState') as never,
-    async waitForDevice(tries = 20) {
+    async waitForDevice(tries = 20, options?) {
+        const abortSignal = options?.abortSignal;
+        abortSignal?.throwIfAborted();
         if (
             !(await retryCondition(
                 // Actually wait until the SpringBoard has been started and users could interact with the device.
@@ -341,14 +343,19 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
                     python('pymobiledevice3', ['springboard', 'state', 'get'], {
                         reject: false,
                         timeout: 10000,
+                        signal: abortSignal,
                     }).then(({ stderr, exitCode }) => exitCode === 0 && !stderr.includes('ERROR')),
-                tries
+                tries,
+                undefined,
+                abortSignal
             ))
         )
             throw new Error('Failed to wait for device: No booted device found after timeout.');
     },
-    async ensureDevice() {
-        const availableDevices = await listDevices({ frida: options.capabilities.includes('frida') });
+    async ensureDevice(ensureOptions) {
+        const abortSignal = ensureOptions?.abortSignal;
+        abortSignal?.throwIfAborted();
+        const availableDevices = await listDevices({ frida: platformApiOptions.capabilities.includes('frida') });
 
         if (availableDevices.length > 1)
             throw new Error('You have multiple devices connected. Please disconnect all but one.');
@@ -356,10 +363,13 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         else if (availableDevices.filter((device) => device.platform === 'ios').length === 0)
             throw new Error('You need to connect an iOS device.');
 
-        if ((await python('pymobiledevice3', ['lockdown', 'info'], { reject: false })).exitCode !== 0)
+        if (
+            (await python('pymobiledevice3', ['lockdown', 'info'], { reject: false, signal: abortSignal })).exitCode !==
+            0
+        )
             throw new Error('You need to trust this computer on your device.');
 
-        if (options.capabilities.includes('ssh')) {
+        if (platformApiOptions.capabilities.includes('ssh')) {
             try {
                 const { stdout } = await this._internal.ssh(['uname']);
                 if (stdout !== 'Darwin') throw new Error('Wrong uname output.');
@@ -370,7 +380,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
             await this._internal.setupEnvironment();
         }
 
-        if (options.capabilities.includes('frida')) {
+        if (platformApiOptions.capabilities.includes('frida')) {
             await this._internal.ensureFrida();
         }
     },
@@ -391,7 +401,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
     uninstallApp: (appId) => python('pymobiledevice3', ['apps', 'uninstall', appId]).then(),
 
     async setAppPermissions(appId, _permissions) {
-        if (!options.capabilities.includes('ssh') || !options.capabilities.includes('frida'))
+        if (!platformApiOptions.capabilities.includes('ssh') || !platformApiOptions.capabilities.includes('frida'))
             throw new Error('SSH and Frida are required for setting app permissions.');
 
         const permissionValues = { allow: 2, deny: 0 } as const;
@@ -431,19 +441,19 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
     },
     setAppBackgroundBatteryUsage: asyncUnimplemented('setAppBatteryOptimization') as never,
     async startApp(appId) {
-        if (options.capabilities.includes('frida')) {
+        if (platformApiOptions.capabilities.includes('frida')) {
             const session = await frida.getUsbDevice().then((f) => f.attach('SpringBoard'));
             const script = await session.createScript(fridaScripts.startApp(appId));
             await script.load();
             await session.detach();
-        } else if (options.capabilities.includes('ssh')) {
+        } else if (platformApiOptions.capabilities.includes('ssh')) {
             this._internal.ssh(['open', appId]);
         } else {
             throw new Error('Frida or SSH (with the open package installed) is required for starting apps.');
         }
     },
     async stopApp(appId) {
-        if (!options.capabilities.includes('frida')) throw new Error('Frida is required for stopping apps.');
+        if (!platformApiOptions.capabilities.includes('frida')) throw new Error('Frida is required for stopping apps.');
 
         const pid = await this.getPidForAppId(appId);
         if (!pid) return;
@@ -452,7 +462,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
     },
 
     getForegroundAppId: async () => {
-        if (!options.capabilities.includes('frida'))
+        if (!platformApiOptions.capabilities.includes('frida'))
             throw new Error('Frida is required for getting the foreground app ID.');
 
         const device = await frida.getUsbDevice();
@@ -460,7 +470,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         return app?.identifier;
     },
     getPidForAppId: async (appId) => {
-        if (!options.capabilities.includes('frida'))
+        if (!platformApiOptions.capabilities.includes('frida'))
             throw new Error('Frida is required for getting the PID for an app ID.');
 
         const { stdout: psJson } = await python('frida-ps', ['--usb', '--applications', '--json']);
@@ -468,7 +478,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         return ps.find((p) => p.identifier === appId)?.pid;
     },
     async getPrefs(appId) {
-        if (!options.capabilities.includes('frida')) throw new Error('Frida is required for getting prefs.');
+        if (!platformApiOptions.capabilities.includes('frida')) throw new Error('Frida is required for getting prefs.');
 
         const pid = await this.getPidForAppId(appId);
         const res = await getObjFromFridaScript(pid, fridaScripts.getPrefs);
@@ -478,7 +488,8 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
     async getDeviceAttribute(attribute, ...args) {
         // IDFV
         if (attribute === 'idfv') {
-            if (!options.capabilities.includes('frida')) throw new Error('Frida is required for getting the IDFV.');
+            if (!platformApiOptions.capabilities.includes('frida'))
+                throw new Error('Frida is required for getting the IDFV.');
 
             const opts = args[0]!;
 
@@ -518,7 +529,8 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         return device[lockdownAttributes[attribute as Exclude<typeof attribute, 'idfv' | 'manufacturer'>]];
     },
     async setClipboard(text) {
-        if (!options.capabilities.includes('frida')) throw new Error('Frida is required for setting the clipboard.');
+        if (!platformApiOptions.capabilities.includes('frida'))
+            throw new Error('Frida is required for setting the clipboard.');
 
         const session = await frida.getUsbDevice().then((f) => f.attach('SpringBoard'));
         const script = await session.createScript(fridaScripts.setClipboard(text));
@@ -527,7 +539,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
     },
 
     async installCertificateAuthority(path) {
-        if (!options.capabilities.includes('ssh'))
+        if (!platformApiOptions.capabilities.includes('ssh'))
             throw new Error('SSH is required for installing a certificate authority.');
 
         const { cert, certDer } = await parsePemCertificateFromFile(path);
@@ -548,7 +560,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         ]);
     },
     async removeCertificateAuthority(path) {
-        if (!options.capabilities.includes('ssh'))
+        if (!platformApiOptions.capabilities.includes('ssh'))
             throw new Error('SSH is required for removing a certificate authority.');
 
         const { certDer } = await parsePemCertificateFromFile(path);
@@ -559,7 +571,8 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         ]);
     },
     setProxy: async (proxy) => {
-        if (!options.capabilities.includes('frida')) throw new Error('Frida is required for configuring a proxy.');
+        if (!platformApiOptions.capabilities.includes('frida'))
+            throw new Error('Frida is required for configuring a proxy.');
 
         // Set proxy settings.
         const session = await frida.getUsbDevice().then((f) => f.attach('SpringBoard'));
@@ -581,7 +594,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
             throw new Error('Failed to set proxy.');
     },
     async addCalendarEvent(eventData) {
-        if (!options.capabilities.includes('frida'))
+        if (!platformApiOptions.capabilities.includes('frida'))
             throw new Error('Frida is required to add events to the calendar.');
 
         const calendarAppId = 'com.apple.mobilecal';
@@ -608,7 +621,7 @@ Components:" > /etc/apt/sources.list.d/appstraction.sources`,
         await this.stopApp(calendarAppId);
     },
     async addContact(contactData) {
-        if (!options.capabilities.includes('frida'))
+        if (!platformApiOptions.capabilities.includes('frida'))
             throw new Error('Frida is required to add contacts to the contact book.');
 
         const contactsAppId = 'com.apple.MobileAddressBook';

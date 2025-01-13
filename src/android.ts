@@ -146,12 +146,12 @@ addContact(${JSON.stringify(contactData)})`,
 } as const;
 
 export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
-    options: PlatformApiOptions<'android', RunTarget, SupportedCapability<'android'>[]>
+    platformApiOptions: PlatformApiOptions<'android', RunTarget, SupportedCapability<'android'>[]>
 ): PlatformApi<'android', 'device' | 'emulator', SupportedCapability<'android'>[]> => ({
-    target: { platform: 'android', runTarget: options.runTarget },
+    target: { platform: 'android', runTarget: platformApiOptions.runTarget },
     _internal: {
         async ensureFrida() {
-            if (!options.capabilities.includes('frida')) return;
+            if (!platformApiOptions.capabilities.includes('frida')) return;
 
             // Ensure that the correct version of `frida-tools` is installed for our Frida JS bindings.
             if (!dependencies.frida) throw new Error('Frida dependency not found. This should never happen.');
@@ -236,29 +236,33 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
             );
             if (!fridaIsStarted) throw new Error('Failed to start Frida.');
         },
-        ensureAdb: () =>
-            adb(['start-server'], { reject: false, timeout: 15000 }).then(({ stdout, exitCode }) => {
-                if (!(exitCode === 0 && (stdout.includes('daemon started successfully') || stdout === '')))
-                    throw new Error('Failed to start ADB.');
-            }),
+        ensureAdb: (adbOptions) =>
+            adb(['start-server'], { reject: false, timeout: 15000, signal: adbOptions?.abortSignal }).then(
+                ({ stdout, exitCode }) => {
+                    if (!(exitCode === 0 && (stdout.includes('daemon started successfully') || stdout === '')))
+                        throw new Error('Failed to start ADB.');
+                }
+            ),
         async hasDeviceBooted(options) {
             const waitForDevice = options?.waitForDevice ?? false;
+            const signal = options?.abortSignal;
             const { stdout: devBootcomplete } = await adb(
                 [...(waitForDevice ? ['wait-for-device'] : []), 'shell', 'getprop', 'dev.bootcomplete'],
-                { reject: false, timeout: 200 }
+                { reject: false, timeout: 200, signal }
             );
             const { stdout: sysBootCompleted } = await adb(
                 [...(waitForDevice ? ['wait-for-device'] : []), 'shell', 'getprop', 'sys.boot_completed'],
-                { reject: false, timeout: 200 }
+                { reject: false, timeout: 200, signal }
             );
             const { stdout: bootanim } = await adb(
                 [...(waitForDevice ? ['wait-for-device'] : []), 'shell', 'getprop', 'init.svc.bootanim'],
-                { reject: false, timeout: 200 }
+                { reject: false, timeout: 200, signal }
             );
             return devBootcomplete.includes('1') && sysBootCompleted.includes('1') && bootanim.includes('stopped');
         },
         async requireRoot(action) {
-            if (!options.capabilities.includes('root')) throw new Error(`Root access is required for ${action}.`);
+            if (!platformApiOptions.capabilities.includes('root'))
+                throw new Error(`Root access is required for ${action}.`);
 
             if (
                 await adb(['shell', 'su', 'root', '/bin/sh -c whoami'], { reject: false }).then(
@@ -402,56 +406,74 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
         },
     },
 
-    async waitForDevice(tries = 20) {
-        await this._internal.ensureAdb();
+    async waitForDevice(tries = 20, options?) {
+        const abortSignal = options?.abortSignal;
+        abortSignal?.throwIfAborted();
+
+        await this._internal.ensureAdb({ abortSignal });
         if (
-            !(await retryCondition(() => this._internal.hasDeviceBooted({ waitForDevice: true }), tries, 100).catch(
-                (e) => {
-                    throw new Error('Failed to wait for device: Error in adb', { cause: e });
-                }
-            ))
+            !(await retryCondition(
+                () => this._internal.hasDeviceBooted({ waitForDevice: true, abortSignal }),
+                tries,
+                100,
+                abortSignal
+            ).catch((e) => {
+                throw new Error('Failed to wait for device: Error in adb', { cause: e });
+            }))
         )
             throw new Error('Failed to wait for device: No booted device found after timeout.');
     },
-    async resetDevice(snapshotName) {
-        if (options.runTarget !== 'emulator') throw new Error('Resetting devices is only supported for emulators.');
+    async resetDevice(snapshotName, options) {
+        if (platformApiOptions.runTarget !== 'emulator')
+            throw new Error('Resetting devices is only supported for emulators.');
+        const abortSignal = options?.abortSignal;
+        abortSignal?.throwIfAborted();
 
         // Annoyingly, this command doesn't return a non-zero exit code if it fails (e.g. if the snapshot doesn't
         // exist). It only prints to stdout (not even stderr -.-).
-        const { stdout } = await adb(['emu', 'avd', 'snapshot', 'load', snapshotName]);
+        const { stdout } = await adb(['emu', 'avd', 'snapshot', 'load', snapshotName], { signal: abortSignal });
         if (stdout.includes('KO')) throw new Error(`Failed to load snapshot: ${stdout}.`);
 
-        await this.waitForDevice();
-        await this.ensureDevice();
+        await this.waitForDevice(undefined, { abortSignal });
+        await this.ensureDevice({ abortSignal });
     },
-    async snapshotDeviceState(snapshotName) {
-        if (options.runTarget !== 'emulator') throw new Error('Snapshotting devices is only supported for emulators.');
+    async snapshotDeviceState(snapshotName, options) {
+        if (platformApiOptions.runTarget !== 'emulator')
+            throw new Error('Snapshotting devices is only supported for emulators.');
+        const abortSignal = options?.abortSignal;
+        abortSignal?.throwIfAborted();
 
-        const { stderr, exitCode } = await adb(['emu', 'avd', 'snapshot', 'save', snapshotName]);
+        const { stderr, exitCode } = await adb(['emu', 'avd', 'snapshot', 'save', snapshotName], {
+            signal: options?.abortSignal,
+        });
         if (exitCode !== 0) throw new Error(`Failed to save snapshot: ${stderr}.`);
 
-        await this.waitForDevice();
+        await this.waitForDevice(undefined, { abortSignal });
     },
-    async ensureDevice() {
-        await this._internal.ensureAdb();
+    async ensureDevice(ensureOptions) {
+        const abortSignal = ensureOptions?.abortSignal;
+        abortSignal?.throwIfAborted();
+        await this._internal.ensureAdb({ abortSignal });
 
-        const availableDevices = await listDevices({ frida: options.capabilities.includes('frida') });
+        const availableDevices = await listDevices({ frida: platformApiOptions.capabilities.includes('frida') });
 
         if (availableDevices.length > 1)
             throw new Error('You have multiple devices connected. Please disconnect all but one.');
         else if (availableDevices.length === 0)
             throw new Error(
-                options.runTarget === 'device' ? 'You need to connect your device.' : 'You need to start the emulator.'
+                platformApiOptions.runTarget === 'device'
+                    ? 'You need to connect your device.'
+                    : 'You need to start the emulator.'
             );
         else if (availableDevices.filter((device) => device.platform === 'android').length === 0)
             throw new Error(
-                options.runTarget === 'device'
+                platformApiOptions.runTarget === 'device'
                     ? 'You need to connect an Android device.'
                     : 'You need to start the emulator.'
             );
 
         if (
-            !(await this._internal.hasDeviceBooted().catch((e) => {
+            !(await this._internal.hasDeviceBooted({ abortSignal }).catch((e) => {
                 throw new Error('Failed to look for device: Error in adb', { cause: e });
             }))
         )
@@ -459,9 +481,9 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
                 'No fully booted device was found. Please wait until the device has been fully booted. Try using `waitForDevice()`.'
             );
 
-        await pRetry(() => this._internal.ensureFrida(), { retries: 5 });
+        await pRetry(() => this._internal.ensureFrida(), { retries: 5, signal: abortSignal });
 
-        if (options.capabilities.includes('wireguard')) {
+        if (platformApiOptions.capabilities.includes('wireguard')) {
             // Install app if necessary.
             if (!(await this.isAppInstalled('com.wireguard.android'))) {
                 try {
@@ -702,8 +724,8 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
         }
     },
     startApp: async (appId) => {
-        if (options.capabilities.includes('certificate-pinning-bypass')) {
-            if (!options.capabilities.includes('frida'))
+        if (platformApiOptions.capabilities.includes('certificate-pinning-bypass')) {
+            if (!platformApiOptions.capabilities.includes('frida'))
                 throw new Error('Frida is required starting apps with certificate pinning bypassed on Android.');
 
             const unpinningScript = await readFile(
@@ -739,7 +761,8 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
         return parseInt(stdout, 10);
     },
     async getPrefs(appId) {
-        if (!options.capabilities.includes('frida')) throw new Error('Frida is required for getting preferences.');
+        if (!platformApiOptions.capabilities.includes('frida'))
+            throw new Error('Frida is required for getting preferences.');
 
         const pid = await this.getPidForAppId(appId);
         const res = await getObjFromFridaScript(pid, fridaScripts.getPrefs);
@@ -771,7 +794,8 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
         );
     },
     async setClipboard(text) {
-        if (!options.capabilities.includes('frida')) throw new Error('Frida is required for setting the clipboard.');
+        if (!platformApiOptions.capabilities.includes('frida'))
+            throw new Error('Frida is required for setting the clipboard.');
 
         // We need to find any running app that we can inject into to set the clipboard.
         const fridaDevice = await frida.getUsbDevice();
@@ -819,7 +843,7 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
     },
     async setProxy(_proxy) {
         // We are dealing with a WireGuard tunnel.
-        if (options.capabilities.includes('wireguard')) {
+        if (platformApiOptions.capabilities.includes('wireguard')) {
             const tunnelName = 'appstraction';
 
             // Since we're communicating with the WireGuard app through intents, we need to disable battery
@@ -958,7 +982,7 @@ export const androidApi = <RunTarget extends SupportedRunTarget<'android'>>(
         await adb(['shell', 'input', 'keyevent', '3']); // Home button, the app is closed and creates the event
     },
     async addContact(contactData) {
-        if (!options.capabilities.includes('frida'))
+        if (!platformApiOptions.capabilities.includes('frida'))
             throw new Error('Frida is required to add contacts to the contact book.');
 
         const contactsAppId = 'com.android.contacts';
